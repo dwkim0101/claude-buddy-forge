@@ -142,7 +142,8 @@ The tool searches both `~/.claude.json` and `~/.claude/.config.json`.
 ## What It Needs
 
 - Node.js 18+
-- Claude Code installed and **logged in at least once**
+- **Claude Code 2.1.89+** (the buddy companion system was introduced in this version)
+- Claude Code **logged in at least once**
 - Permission to edit your local Claude launcher and `~/.claude.json`
 
 ## Commands
@@ -243,7 +244,8 @@ curl -fsSL https://raw.githubusercontent.com/dwkim0101/claude-buddy-forge/main/i
 ## 필요 조건
 
 - Node.js 18 이상
-- Claude Code 설치 및 **최소 1회 로그인 완료**
+- **Claude Code 1.89.0 이상** (이전 버전은 버디 솔트 형식이 다릅니다)
+- Claude Code **최소 1회 로그인 완료**
 - Claude launcher 및 `~/.claude.json` 편집 권한
 
 ## 명령어
