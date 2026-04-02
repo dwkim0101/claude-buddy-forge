@@ -409,23 +409,61 @@ function estimateProbability(target, data) {
   return probability;
 }
 
+// ANSI helpers for pretty output
+const c = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  cyan: "\x1b[36m",
+  yellow: "\x1b[33m",
+  green: "\x1b[32m",
+  magenta: "\x1b[35m",
+  red: "\x1b[31m",
+  gray: "\x1b[90m",
+  white: "\x1b[37m",
+  blue: "\x1b[34m",
+  inverse: "\x1b[7m",
+};
+
+const RARITY_ANSI = {
+  common: c.white,
+  uncommon: c.green,
+  rare: c.blue,
+  epic: c.magenta,
+  legendary: c.yellow,
+};
+
+const SPINNERS = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 function findTarget(userId, target, data, options) {
   const saltLength = ORIGINAL_SALT.length;
   const startedAt = Date.now();
+  const isTTY = process.stderr.isTTY;
 
   for (let attempts = 1; attempts <= options.maxAttempts; attempts += 1) {
     const salt = crypto.randomBytes(8).toString("hex").slice(0, saltLength);
     const result = rollWithSalt(userId, salt, data);
     if (isMatch(result, target)) {
+      if (isTTY) process.stderr.write("\x1b[2K\r");
       return { ...result, attempts, elapsedMs: Date.now() - startedAt };
     }
 
     if (attempts % options.progressEvery === 0) {
       const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
-      console.error(`searched ${attempts.toLocaleString()} salts in ${elapsed}s...`);
+      if (isTTY) {
+        const spin = SPINNERS[Math.floor(attempts / options.progressEvery) % SPINNERS.length];
+        const pct = ((attempts / options.maxAttempts) * 100).toFixed(1);
+        const bar = "█".repeat(Math.floor(pct / 5)) + "░".repeat(20 - Math.floor(pct / 5));
+        process.stderr.write(
+          `\x1b[2K\r  ${c.cyan}${spin}${c.reset} ${c.gray}${bar}${c.reset} ${c.white}${attempts.toLocaleString()}${c.reset}${c.gray} salts │ ${elapsed}s │ ${pct}%${c.reset}`
+        );
+      } else {
+        console.error(`searched ${attempts.toLocaleString()} salts in ${elapsed}s...`);
+      }
     }
   }
 
+  if (isTTY) process.stderr.write("\x1b[2K\r");
   return null;
 }
 
@@ -591,31 +629,68 @@ async function runGuided(options) {
 
     assertTarget(target, data);
     const probability = estimateProbability(target, data);
+    const rarityColor = RARITY_ANSI[target.rarity] ?? c.white;
 
-    console.log(`\nSearching for: ${JSON.stringify(target)}`);
-    console.log(`Estimated probability: ${formatProbability(probability)}\n`);
+    console.log("");
+    console.log(`  ${c.cyan}╔══════════════════════════════════════════╗${c.reset}`);
+    console.log(`  ${c.cyan}║${c.reset}  ${c.bold}⚡ Searching for your buddy...${c.reset}            ${c.cyan}║${c.reset}`);
+    console.log(`  ${c.cyan}╚══════════════════════════════════════════╝${c.reset}`);
+    console.log("");
+    console.log(`  ${c.gray}Target:${c.reset} ${rarityColor}${target.rarity}${c.reset} ${target.species} ${target.eye} ${target.hat ?? "none"}${target.shiny ? ` ${c.yellow}✨shiny${c.reset}` : ""}`);
+    console.log(`  ${c.gray}Probability:${c.reset} ${c.yellow}${formatProbability(probability)}${c.reset}`);
+    console.log("");
 
     const found = findTarget(userId, target, data, options);
     if (!found) {
-      fail(`No matching salt found in ${options.maxAttempts.toLocaleString()} attempts.`);
+      console.log(`  ${c.red}✗${c.reset} No matching salt found in ${options.maxAttempts.toLocaleString()} attempts.`);
+      process.exit(1);
     }
 
     const patchInfo = patchLauncher(launcherPath, found.salt);
     clearCompanion(configPath);
-    console.log(
-      JSON.stringify(
-        {
-          launcherPath,
-          configPath,
-          backupPath: patchInfo.backupPath,
-          target,
-          result: summarizeResult(found, probability),
-          nextAction: "Restart Claude Code completely.",
-        },
-        null,
-        2,
-      ),
-    );
+
+    // Pretty result output
+    const bones = createPreviewBones(found, data);
+    const sprite = renderSprite(data, bones, 0);
+    const elapsed = (found.elapsedMs / 1000).toFixed(1);
+
+    console.log(`  ${c.green}✓${c.bold} Found in ${found.attempts.toLocaleString()} attempts (${elapsed}s)${c.reset}`);
+    console.log("");
+    console.log(`  ${c.cyan}╔══════════════════════════════════════════╗${c.reset}`);
+    console.log(`  ${c.cyan}║${c.reset}  ${c.bold}🎉 Your new buddy is ready!${c.reset}               ${c.cyan}║${c.reset}`);
+    console.log(`  ${c.cyan}╠══════════════════════════════════════════╣${c.reset}`);
+    console.log(`  ${c.cyan}║${c.reset}                                          ${c.cyan}║${c.reset}`);
+    for (const line of sprite) {
+      const padded = `  ${rarityColor}${line}${c.reset}`.padEnd(56);
+      console.log(`  ${c.cyan}║${c.reset}${padded}${c.cyan}║${c.reset}`);
+    }
+    console.log(`  ${c.cyan}║${c.reset}                                          ${c.cyan}║${c.reset}`);
+    console.log(`  ${c.cyan}║${c.reset}  ${c.gray}Rarity:${c.reset}  ${rarityColor}${c.bold}${found.rarity.toUpperCase()}${c.reset}${" ".repeat(Math.max(0, 30 - found.rarity.length))}${c.cyan}║${c.reset}`);
+    console.log(`  ${c.cyan}║${c.reset}  ${c.gray}Species:${c.reset} ${found.species}${" ".repeat(Math.max(0, 31 - found.species.length))}${c.cyan}║${c.reset}`);
+    console.log(`  ${c.cyan}║${c.reset}  ${c.gray}Eyes:${c.reset}    ${found.eye}${" ".repeat(Math.max(0, 32 - 1))}${c.cyan}║${c.reset}`);
+    console.log(`  ${c.cyan}║${c.reset}  ${c.gray}Hat:${c.reset}     ${found.hat}${" ".repeat(Math.max(0, 32 - found.hat.length))}${c.cyan}║${c.reset}`);
+    console.log(`  ${c.cyan}║${c.reset}  ${c.gray}Shiny:${c.reset}   ${found.shiny ? `${c.yellow}✨ YES${c.reset}` + " ".repeat(26) : `no${" ".repeat(30)}`}${c.cyan}║${c.reset}`);
+    console.log(`  ${c.cyan}║${c.reset}                                          ${c.cyan}║${c.reset}`);
+
+    // Stats bars
+    console.log(`  ${c.cyan}║${c.reset}  ${c.gray}─── Stats ────────────────────────${c.reset}      ${c.cyan}║${c.reset}`);
+    for (const [name, value] of Object.entries(found.stats)) {
+      const filled = Math.round(value / 10);
+      const empty = 10 - filled;
+      const bar = `${rarityColor}${"█".repeat(filled)}${c.gray}${"░".repeat(empty)}${c.reset}`;
+      const label = name.padEnd(10);
+      console.log(`  ${c.cyan}║${c.reset}  ${c.gray}${label}${c.reset} ${bar} ${c.dim}${value}${c.reset}${" ".repeat(Math.max(0, 17 - String(value).length))}${c.cyan}║${c.reset}`);
+    }
+
+    console.log(`  ${c.cyan}║${c.reset}                                          ${c.cyan}║${c.reset}`);
+    console.log(`  ${c.cyan}║${c.reset}  ${c.gray}Salt:${c.reset}    ${c.dim}${found.salt}${c.reset}${" ".repeat(Math.max(0, 32 - found.salt.length))}${c.cyan}║${c.reset}`);
+    console.log(`  ${c.cyan}║${c.reset}  ${c.gray}Backup:${c.reset}  ${c.dim}✓ saved${c.reset}${" ".repeat(26)}${c.cyan}║${c.reset}`);
+    console.log(`  ${c.cyan}║${c.reset}                                          ${c.cyan}║${c.reset}`);
+    console.log(`  ${c.cyan}╚══════════════════════════════════════════╝${c.reset}`);
+    console.log("");
+    console.log(`  ${c.yellow}${c.bold}⚡ Restart Claude Code completely to see your new buddy!${c.reset}`);
+    console.log(`  ${c.gray}Run ${c.white}claude-buddy-forge restore${c.gray} to undo at any time.${c.reset}`);
+    console.log("");
     return;
   }
 
@@ -681,20 +756,48 @@ function runCurrent(options) {
   const launcherText = fs.readFileSync(launcherPath, "utf8");
   const salt = detectSalt(launcherText);
   const result = rollWithSalt(getUserId(config), salt, data);
+  const isTTY = process.stdout.isTTY;
 
-  console.log(
-    JSON.stringify(
-      {
-        launcherPath,
-        configPath,
-        userId: getUserId(config),
-        salt,
-        result,
-      },
-      null,
-      2,
-    ),
-  );
+  if (!isTTY) {
+    console.log(JSON.stringify({ launcherPath, configPath, userId: getUserId(config), salt, result }, null, 2));
+    return;
+  }
+
+  const rarityColor = RARITY_ANSI[result.rarity] ?? c.white;
+  const bones = createPreviewBones(result, data);
+  const sprite = renderSprite(data, bones, 0);
+
+  console.log("");
+  console.log(`  ${c.cyan}╔══════════════════════════════════════════╗${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}  ${c.bold}🐾 Your Current Buddy${c.reset}                     ${c.cyan}║${c.reset}`);
+  console.log(`  ${c.cyan}╠══════════════════════════════════════════╣${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}                                          ${c.cyan}║${c.reset}`);
+  for (const line of sprite) {
+    const padded = `  ${rarityColor}${line}${c.reset}`.padEnd(56);
+    console.log(`  ${c.cyan}║${c.reset}${padded}${c.cyan}║${c.reset}`);
+  }
+  console.log(`  ${c.cyan}║${c.reset}                                          ${c.cyan}║${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}  ${c.gray}Rarity:${c.reset}  ${rarityColor}${c.bold}${result.rarity.toUpperCase()}${c.reset}${" ".repeat(Math.max(0, 30 - result.rarity.length))}${c.cyan}║${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}  ${c.gray}Species:${c.reset} ${result.species}${" ".repeat(Math.max(0, 31 - result.species.length))}${c.cyan}║${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}  ${c.gray}Eyes:${c.reset}    ${result.eye}${" ".repeat(Math.max(0, 32 - 1))}${c.cyan}║${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}  ${c.gray}Hat:${c.reset}     ${result.hat}${" ".repeat(Math.max(0, 32 - result.hat.length))}${c.cyan}║${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}  ${c.gray}Shiny:${c.reset}   ${result.shiny ? `${c.yellow}✨ YES${c.reset}` + " ".repeat(26) : `no${" ".repeat(30)}`}${c.cyan}║${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}  ${c.gray}Salt:${c.reset}    ${c.dim}${salt}${c.reset}${" ".repeat(Math.max(0, 32 - salt.length))}${c.cyan}║${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}                                          ${c.cyan}║${c.reset}`);
+
+  // Stats bars
+  console.log(`  ${c.cyan}║${c.reset}  ${c.gray}─── Stats ────────────────────────${c.reset}      ${c.cyan}║${c.reset}`);
+  for (const [name, value] of Object.entries(result.stats)) {
+    const filled = Math.round(value / 10);
+    const empty = 10 - filled;
+    const bar = `${rarityColor}${"█".repeat(filled)}${c.gray}${"░".repeat(empty)}${c.reset}`;
+    const label = name.padEnd(10);
+    console.log(`  ${c.cyan}║${c.reset}  ${c.gray}${label}${c.reset} ${bar} ${c.dim}${value}${c.reset}${" ".repeat(Math.max(0, 17 - String(value).length))}${c.cyan}║${c.reset}`);
+  }
+
+  console.log(`  ${c.cyan}║${c.reset}                                          ${c.cyan}║${c.reset}`);
+  console.log(`  ${c.cyan}╚══════════════════════════════════════════╝${c.reset}`);
+  console.log("");
 }
 
 async function runCatalog(options) {
@@ -759,18 +862,25 @@ function runRestore(options) {
   const configPath = getConfigPath(options.configPath);
   const backupPath = restoreLauncher(launcherPath);
   clearCompanion(configPath);
-  console.log(
-    JSON.stringify(
-      {
-        launcherPath,
-        configPath,
-        restoredFrom: backupPath,
-        nextAction: "Restart Claude Code completely.",
-      },
-      null,
-      2,
-    ),
-  );
+  const isTTY = process.stdout.isTTY;
+
+  if (!isTTY) {
+    console.log(JSON.stringify({ launcherPath, configPath, restoredFrom: backupPath, nextAction: "Restart Claude Code completely." }, null, 2));
+    return;
+  }
+
+  console.log("");
+  console.log(`  ${c.cyan}╔══════════════════════════════════════════╗${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}  ${c.green}${c.bold}✓ Buddy restored to original!${c.reset}             ${c.cyan}║${c.reset}`);
+  console.log(`  ${c.cyan}╠══════════════════════════════════════════╣${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}                                          ${c.cyan}║${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}  ${c.gray}Restored from:${c.reset}                          ${c.cyan}║${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}  ${c.dim}${backupPath}${c.reset}`);
+  console.log(`  ${c.cyan}║${c.reset}                                          ${c.cyan}║${c.reset}`);
+  console.log(`  ${c.cyan}╚══════════════════════════════════════════╝${c.reset}`);
+  console.log("");
+  console.log(`  ${c.yellow}${c.bold}⚡ Restart Claude Code completely to see your original buddy!${c.reset}`);
+  console.log("");
 }
 
 async function main() {

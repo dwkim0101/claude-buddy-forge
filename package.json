@@ -1,6 +1,6 @@
 {
   "name": "claude-buddy-forge",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Interactive Claude Code buddy reroll CLI with bundled ASCII previews",
   "type": "module",
   "bin": {
