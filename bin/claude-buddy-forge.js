@@ -592,19 +592,24 @@ function runInkUI(catalogOnly = false) {
       const React = await import("react");
       const { App } = await import("../lib/components/App.js");
 
+      let resolved = false;
+      const done = (value) => {
+        if (resolved) return;
+        resolved = true;
+        instance.unmount();
+        // Small delay to let ink fully clean up before printing ANSI output
+        setTimeout(() => resolve(value), 100);
+      };
+
       const h = React.createElement;
       const instance = render(
         h(App, {
           catalogOnly,
-          onComplete: (target) => {
-            instance.unmount();
-            resolve(target);
-          },
+          onComplete: (target) => done(target),
+          onExit: () => done(null),
         }),
       );
-      instance.waitUntilExit().then(() => {
-        if (!catalogOnly) resolve(null);
-      });
+      instance.waitUntilExit().then(() => done(null));
     } catch (error) {
       reject(error);
     }
