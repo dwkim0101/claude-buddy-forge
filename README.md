@@ -150,9 +150,10 @@ The tool searches both `~/.claude.json` and `~/.claude/.config.json`.
 
 1. **Quit Claude Code completely** before running this tool. The launcher file must not be in use while patching.
 2. Run `claude-buddy-forge` in a **regular terminal** (not inside Claude Code's terminal).
-3. After patching, **restart Claude Code** to see your new buddy.
-4. If a Claude Code update resets your buddy, just run the tool again — your preferences are quick to re-apply.
-5. The tool **automatically creates a backup** of your launcher on first patch. You can always restore with `claude-buddy-forge restore`.
+3. After patching, **restart Claude Code**.
+4. Run `/buddy` inside Claude Code — your chosen buddy will now appear and stay locked in.
+5. If a Claude Code update resets your buddy, just run the tool again — your preferences are quick to re-apply.
+6. The tool **automatically creates a backup** of your launcher on first patch. You can always restore with `claude-buddy-forge restore`.
 
 ## Commands
 
@@ -260,9 +261,10 @@ curl -fsSL https://raw.githubusercontent.com/dwkim0101/claude-buddy-forge/main/i
 
 1. 이 도구를 실행하기 전에 **Claude Code를 완전히 종료**하세요. 패치 중에 런처 파일이 사용 중이면 안 됩니다.
 2. **일반 터미널**에서 실행하세요 (Claude Code 내부 터미널이 아닌).
-3. 패치 후 **Claude Code를 재시작**해야 새 버디가 보입니다.
-4. Claude Code 업데이트로 버디가 초기화되면, 다시 실행하면 됩니다 — 금방 다시 적용할 수 있습니다.
-5. 첫 패치 시 **런처 백업이 자동 생성**됩니다. 언제든 `claude-buddy-forge restore`로 복원 가능합니다.
+3. 패치 후 **Claude Code를 재시작**하세요.
+4. Claude Code에서 `/buddy`를 실행하면 — 선택한 버디가 나타나고 고정됩니다.
+5. Claude Code 업데이트로 버디가 초기화되면, 다시 실행하면 됩니다 — 금방 다시 적용할 수 있습니다.
+6. 첫 패치 시 **런처 백업이 자동 생성**됩니다. 언제든 `claude-buddy-forge restore`로 복원 가능합니다.
 
 ## 명령어
 
