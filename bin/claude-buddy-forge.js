@@ -232,7 +232,16 @@ function getBuddyData() {
 }
 
 function getUserId(config) {
-  return config.oauthAccount?.accountUuid ?? config.userID ?? "anon";
+  const id = config.oauthAccount?.accountUuid ?? config.userID ?? null;
+  if (!id) {
+    fail(
+      "Could not detect your Claude account ID.\n" +
+      "You must log in to Claude Code at least once before using this tool.\n" +
+      "  Run: claude  (and complete login)\n" +
+      "  Then try claude-buddy-forge again."
+    );
+  }
+  return id;
 }
 
 function hashString(value) {
