@@ -142,6 +142,7 @@ The tool searches both `~/.claude.json` and `~/.claude/.config.json`.
 ## What It Needs
 
 - Node.js 18+
+- **[Bun](https://bun.sh)** runtime (strongly recommended — Claude Code uses `Bun.hash()` internally; without Bun the forge produces wrong buddy results)
 - **Claude Code 2.1.89+** (the buddy companion system was introduced in this version)
 - Claude Code **logged in at least once**
 - Permission to edit your local Claude launcher and `~/.claude.json`
@@ -200,12 +201,24 @@ claude-buddy-forge restore
  4. cat         8. penguin    12. axolotl     16. rabbit
 ```
 
+## How It Works
+
+Claude Code is a **Bun-based binary** that uses `Bun.hash()` (wyhash) to generate buddy characteristics from your account ID + salt. The forge:
+
+1. **Searches** for a salt that produces your desired buddy combination
+2. **Patches** the salt directly in the binary (byte-level, preserving file size)
+3. **Re-signs** the binary with an ad-hoc code signature (macOS)
+4. **Backs up** the original on first run, and restores from backup before re-patching
+
+The forge automatically re-executes under Bun to ensure hash compatibility. If Bun is not installed, buddy results will not match what Claude Code displays.
+
 ## Notes
 
 - This is not an official Claude Code workflow.
 - It patches your local launcher, so Claude updates may overwrite it.
 - After patching, fully restart Claude Code.
 - The tool is self-contained — no external data files needed.
+- You can re-forge as many times as you want — the backup is always preserved.
 
 ---
 
@@ -253,6 +266,7 @@ curl -fsSL https://raw.githubusercontent.com/dwkim0101/claude-buddy-forge/main/i
 ## 필요 조건
 
 - Node.js 18 이상
+- **[Bun](https://bun.sh)** 런타임 (강력 권장 — Claude Code가 내부적으로 `Bun.hash()`를 사용하므로, Bun 없이는 잘못된 버디가 생성됩니다)
 - **Claude Code 2.1.89 이상** (버디 컴패니언 시스템이 이 버전에서 도입되었습니다)
 - Claude Code **최소 1회 로그인 완료**
 - Claude launcher 및 `~/.claude.json` 편집 권한
@@ -302,9 +316,21 @@ claude-buddy-forge restore      # 원래 버디로 복원
 claude-buddy-forge restore
 ```
 
+## 작동 원리
+
+Claude Code는 **Bun 기반 바이너리**로, `Bun.hash()` (wyhash)를 사용하여 계정 ID + salt로 버디 특성을 생성합니다. Forge는:
+
+1. 원하는 버디 조합을 생성하는 salt를 **검색**
+2. 바이너리에 salt를 직접 **패치** (바이트 수준, 파일 크기 유지)
+3. macOS에서 ad-hoc 코드 서명으로 **재서명**
+4. 첫 실행 시 원본을 **백업**하고, 재패치 전에 항상 백업에서 복원
+
+Forge는 해시 호환성을 위해 자동으로 Bun 아래에서 재실행됩니다. Bun이 설치되어 있지 않으면 버디 결과가 Claude Code에 표시되는 것과 일치하지 않습니다.
+
 ## 주의사항
 
 - 이 도구는 공식 Claude Code 워크플로우가 아닙니다.
 - 로컬 런처를 패치하므로 Claude 업데이트 시 덮어쓸 수 있습니다.
 - 패치 후 Claude Code를 완전히 재시작해야 합니다.
 - 외부 데이터 파일 없이 자체 포함된 도구입니다.
+- 원하는 만큼 재forge 가능 — 백업은 항상 보존됩니다.

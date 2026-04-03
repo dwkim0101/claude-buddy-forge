@@ -1,5 +1,26 @@
 #!/usr/bin/env node
 
+// Claude Code runs under Bun and uses Bun.hash() (wyhash) for buddy
+// generation.  If we run under Node the hash differs, producing wrong
+// buddies.  Re-exec under Bun when available so Bun.hash() is accessible.
+if (typeof globalThis.Bun === "undefined") {
+  try {
+    const { execFileSync: efs, spawnSync } = await import("node:child_process");
+    const bunPath = efs("which", ["bun"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+    if (bunPath) {
+      const r = spawnSync(bunPath, process.argv.slice(1), { stdio: "inherit" });
+      process.exit(r.status ?? 1);
+    }
+  } catch {
+    // Bun not found — continue under Node.
+    console.error(
+      "⚠️  Bun runtime not found. Claude Code uses Bun.hash() for buddy generation.\n" +
+      "   Without Bun, the forge may produce wrong buddy results.\n" +
+      "   Install Bun: curl -fsSL https://bun.sh/install | bash\n"
+    );
+  }
+}
+
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -380,6 +401,16 @@ function getUserId(config) {
 }
 
 function hashString(value) {
+  // Claude Code uses Bun.hash() (wyhash) when running under Bun.
+  // The re-exec block at the top of this file ensures we run under Bun
+  // when available, so this branch is the primary path.
+  if (typeof globalThis.Bun !== "undefined") {
+    return Number(BigInt(Bun.hash(value)) & 0xffffffffn);
+  }
+
+  // Fallback: FNV-1a.  Only reached if Bun is not installed at all.
+  // WARNING: This produces DIFFERENT buddy results than Claude Code.
+  // Install Bun (https://bun.sh) for correct buddy computation.
   let hash = 2166136261;
   for (let i = 0; i < value.length; i += 1) {
     hash ^= value.charCodeAt(i);
