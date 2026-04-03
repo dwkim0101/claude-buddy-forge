@@ -1,6 +1,6 @@
 {
   "name": "claude-buddy-forge",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "description": "Interactive Claude Code buddy reroll CLI with bundled ASCII previews",
   "type": "module",
   "bin": {
@@ -16,14 +16,25 @@
   "engines": {
     "node": ">=18"
   },
-  "keywords": ["claude", "buddy", "companion", "ascii-art", "cli", "reroll"],
+  "keywords": [
+    "claude",
+    "buddy",
+    "companion",
+    "ascii-art",
+    "cli",
+    "reroll"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/dwkim0101/claude-buddy-forge.git"
   },
-  "files": ["bin/", "lib/"],
+  "files": [
+    "bin/",
+    "lib/"
+  ],
   "dependencies": {
+    "claude-buddy-forge": "^1.0.3",
     "ink": "^6.8.0",
     "react": "^19.2.4"
   }

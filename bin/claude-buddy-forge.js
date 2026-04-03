@@ -137,6 +137,20 @@ function getConfigPath(explicitPath) {
 // short identifier followed by the quoted salt value.
 const SALT_VAR_RE = /([A-Za-z_$][A-Za-z0-9_$]{0,4})="(friend-\d{4}-\d+)"/;
 
+function isBinaryFile(filePath) {
+  const buf = Buffer.alloc(512);
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const bytesRead = fs.readSync(fd, buf, 0, 512, 0);
+    for (let i = 0; i < bytesRead; i++) {
+      if (buf[i] === 0) return true;
+    }
+    return false;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function detectLauncherPath(explicitPath) {
   const candidates = [];
   const push = value => {
@@ -161,31 +175,33 @@ function detectLauncherPath(explicitPath) {
   for (const candidate of candidates) {
     if (!candidate || !fs.existsSync(candidate)) continue;
     try {
-      const text = fs.readFileSync(candidate, "utf8");
-      if (text.includes(ORIGINAL_SALT)) {
+      // Read as raw bytes to safely check both text and binary launchers.
+      const buf = fs.readFileSync(candidate);
+      if (buf.includes(ORIGINAL_SALT)) {
         return candidate;
       }
     } catch {
-      // Ignore binary launchers and continue.
+      // Ignore inaccessible files and continue.
     }
   }
 
   fail("Could not locate a Claude launcher with a buddy salt marker. Pass --launcher.");
 }
 
-function detectSalt(launcherText) {
-  // Match the salt variable regardless of its minified name.
-  const match = launcherText.match(SALT_VAR_RE);
+function detectSalt(launcherContent) {
+  // launcherContent can be a string or Buffer — convert to string for regex.
+  const text = typeof launcherContent === "string" ? launcherContent : launcherContent.toString("utf8");
+  const match = text.match(SALT_VAR_RE);
   if (match) return match[2];
-  if (launcherText.includes(ORIGINAL_SALT)) return ORIGINAL_SALT;
+  if (text.includes(ORIGINAL_SALT)) return ORIGINAL_SALT;
   fail("Could not detect current buddy salt in launcher.");
 }
 
-function ensureBackup(launcherPath, launcherText) {
+function ensureBackup(launcherPath, launcherBuf) {
   const stableBackup = `${launcherPath}.buddy-orig.bak`;
   if (fs.existsSync(stableBackup)) return stableBackup;
 
-  if (launcherText.includes(ORIGINAL_SALT)) {
+  if (launcherBuf.includes(ORIGINAL_SALT)) {
     fs.copyFileSync(launcherPath, stableBackup);
     return stableBackup;
   }
@@ -198,7 +214,7 @@ function ensureBackup(launcherPath, launcherText) {
     .map(entry => path.join(dir, entry))
     .filter(candidate => {
       try {
-        return fs.readFileSync(candidate, "utf8").includes(ORIGINAL_SALT);
+        return fs.readFileSync(candidate).includes(ORIGINAL_SALT);
       } catch {
         return false;
       }
@@ -215,20 +231,46 @@ function ensureBackup(launcherPath, launcherText) {
 }
 
 function patchLauncher(launcherPath, nextSalt) {
-  const launcherText = fs.readFileSync(launcherPath, "utf8");
-  const currentSalt = detectSalt(launcherText);
-  const backupPath = ensureBackup(launcherPath, launcherText);
+  const binary = isBinaryFile(launcherPath);
+  const launcherBuf = fs.readFileSync(launcherPath);
+  const currentSalt = detectSalt(launcherBuf);
+  const backupPath = ensureBackup(launcherPath, launcherBuf);
 
-  // Replace the salt value while preserving whatever minified variable name
-  // the current build uses.
-  const nextText = launcherText.replace(
-    SALT_VAR_RE,
-    (_, varName) => `${varName}="${nextSalt}"`
-  );
+  if (binary) {
+    // For binary launchers, do a byte-level replacement to preserve the
+    // executable format.  We locate the salt regex match within a lossy
+    // string view but splice the raw bytes so non-UTF8 data stays intact.
+    const text = launcherBuf.toString("utf8");
+    const match = text.match(SALT_VAR_RE);
+    if (!match) fail("Failed to locate salt pattern in binary launcher.");
 
-  if (nextText === launcherText) fail("Failed to patch launcher salt.");
+    const oldSnippet = Buffer.from(match[0], "utf8");
+    const newSnippet = Buffer.from(`${match[1]}="${nextSalt}"`, "utf8");
 
-  fs.writeFileSync(launcherPath, nextText, "utf8");
+    const idx = launcherBuf.indexOf(oldSnippet);
+    if (idx === -1) fail("Failed to locate salt bytes in binary launcher.");
+
+    const patched = Buffer.concat([
+      launcherBuf.subarray(0, idx),
+      newSnippet,
+      launcherBuf.subarray(idx + oldSnippet.length),
+    ]);
+
+    fs.writeFileSync(launcherPath, patched);
+    fs.chmodSync(launcherPath, 0o755);
+  } else {
+    // Text launcher — safe to use string operations.
+    const launcherText = launcherBuf.toString("utf8");
+    const nextText = launcherText.replace(
+      SALT_VAR_RE,
+      (_, varName) => `${varName}="${nextSalt}"`
+    );
+
+    if (nextText === launcherText) fail("Failed to patch launcher salt.");
+
+    fs.writeFileSync(launcherPath, nextText, "utf8");
+  }
+
   return { currentSalt, backupPath };
 }
 
@@ -770,8 +812,8 @@ function runCurrent(options) {
   const launcherPath = detectLauncherPath(options.launcherPath);
   const configPath = getConfigPath(options.configPath);
   const config = readJson(configPath);
-  const launcherText = fs.readFileSync(launcherPath, "utf8");
-  const salt = detectSalt(launcherText);
+  const launcherBuf = fs.readFileSync(launcherPath);
+  const salt = detectSalt(launcherBuf);
   const result = rollWithSalt(getUserId(config), salt, data);
   const isTTY = process.stdout.isTTY;
 
