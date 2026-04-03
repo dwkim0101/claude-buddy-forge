@@ -132,6 +132,11 @@ function getConfigPath(explicitPath) {
   return found;
 }
 
+// Regex to match the minified salt variable assignment.
+// The variable name changes across builds (NV_, LN_, etc.), so we match any
+// short identifier followed by the quoted salt value.
+const SALT_VAR_RE = /([A-Za-z_$][A-Za-z0-9_$]{0,4})="(friend-\d{4}-\d+)"/;
+
 function detectLauncherPath(explicitPath) {
   const candidates = [];
   const push = value => {
@@ -157,7 +162,7 @@ function detectLauncherPath(explicitPath) {
     if (!candidate || !fs.existsSync(candidate)) continue;
     try {
       const text = fs.readFileSync(candidate, "utf8");
-      if (/NV_="([^"]+)"/.test(text) || text.includes(ORIGINAL_SALT)) {
+      if (text.includes(ORIGINAL_SALT)) {
         return candidate;
       }
     } catch {
@@ -169,8 +174,9 @@ function detectLauncherPath(explicitPath) {
 }
 
 function detectSalt(launcherText) {
-  const match = launcherText.match(/NV_="([^"]+)"/);
-  if (match) return match[1];
+  // Match the salt variable regardless of its minified name.
+  const match = launcherText.match(SALT_VAR_RE);
+  if (match) return match[2];
   if (launcherText.includes(ORIGINAL_SALT)) return ORIGINAL_SALT;
   fail("Could not detect current buddy salt in launcher.");
 }
@@ -212,7 +218,13 @@ function patchLauncher(launcherPath, nextSalt) {
   const launcherText = fs.readFileSync(launcherPath, "utf8");
   const currentSalt = detectSalt(launcherText);
   const backupPath = ensureBackup(launcherPath, launcherText);
-  const nextText = launcherText.replace(/NV_="([^"]+)"/, `NV_="${nextSalt}"`);
+
+  // Replace the salt value while preserving whatever minified variable name
+  // the current build uses.
+  const nextText = launcherText.replace(
+    SALT_VAR_RE,
+    (_, varName) => `${varName}="${nextSalt}"`
+  );
 
   if (nextText === launcherText) fail("Failed to patch launcher salt.");
 
