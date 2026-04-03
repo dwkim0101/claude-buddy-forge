@@ -175,9 +175,14 @@ function detectLauncherPath(explicitPath) {
   for (const candidate of candidates) {
     if (!candidate || !fs.existsSync(candidate)) continue;
     try {
-      // Read as raw bytes to safely check both text and binary launchers.
+      // Check if this candidate contains the original salt OR was previously
+      // patched (indicated by a backup file next to it).
       const buf = fs.readFileSync(candidate);
       if (buf.includes(ORIGINAL_SALT)) {
+        return candidate;
+      }
+      // Previously patched launcher: the salt was replaced but backup exists.
+      if (fs.existsSync(`${candidate}.buddy-orig.bak`)) {
         return candidate;
       }
     } catch {
@@ -188,11 +193,33 @@ function detectLauncherPath(explicitPath) {
   fail("Could not locate a Claude launcher with a buddy salt marker. Pass --launcher.");
 }
 
-function detectSalt(launcherContent) {
+function detectSalt(launcherContent, launcherPath) {
   // launcherContent can be a string or Buffer — convert to string for regex.
   const text = typeof launcherContent === "string" ? launcherContent : launcherContent.toString("utf8");
+
+  // Try original salt pattern first (unpatched launcher).
   const match = text.match(SALT_VAR_RE);
   if (match) return match[2];
+
+  // For previously-patched launchers, the salt is now a hex string.
+  // Find the variable name from the backup (which has the original pattern),
+  // then read the current value from that same variable in the patched file.
+  if (launcherPath) {
+    const backupPath = `${launcherPath}.buddy-orig.bak`;
+    if (fs.existsSync(backupPath)) {
+      const backupText = fs.readFileSync(backupPath, isBinaryFile(backupPath) ? undefined : "utf8");
+      const backupStr = typeof backupText === "string" ? backupText : backupText.toString("utf8");
+      const backupMatch = backupStr.match(SALT_VAR_RE);
+      if (backupMatch) {
+        // Build a regex for the same variable name with any 15-char hex salt.
+        const varName = backupMatch[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const patchedRe = new RegExp(`${varName}="([0-9a-f]{${ORIGINAL_SALT.length}})"`);
+        const patchedMatch = text.match(patchedRe);
+        if (patchedMatch) return patchedMatch[1];
+      }
+    }
+  }
+
   if (text.includes(ORIGINAL_SALT)) return ORIGINAL_SALT;
   fail("Could not detect current buddy salt in launcher.");
 }
@@ -232,36 +259,61 @@ function ensureBackup(launcherPath, launcherBuf) {
 
 function patchLauncher(launcherPath, nextSalt) {
   const binary = isBinaryFile(launcherPath);
+
+  // If a backup exists, always restore to the original state first.
+  // This ensures the regex and salt detection work from a known baseline,
+  // and prevents stale hex salts from blocking a re-forge.
+  const stableBackup = `${launcherPath}.buddy-orig.bak`;
+  if (fs.existsSync(stableBackup)) {
+    fs.copyFileSync(stableBackup, launcherPath);
+  }
+
   const launcherBuf = fs.readFileSync(launcherPath);
-  const currentSalt = detectSalt(launcherBuf);
+  const currentSalt = detectSalt(launcherBuf, launcherPath);
   const backupPath = ensureBackup(launcherPath, launcherBuf);
 
   if (binary) {
     // Binary launchers (Mach-O / ELF) embed JS as data.  We must:
     //  1. Locate the salt pattern as raw bytes (avoid UTF-8 round-trip).
     //  2. Replace in-place so the file size never changes.
-    //  3. Patch ALL occurrences — the binary may contain duplicate code sections.
+    //  3. Patch ALL occurrences — the binary may contain duplicate code sections
+    //     and a bare salt string in the Mach-O string table.
     //  4. Re-sign with an ad-hoc signature so macOS accepts the modified binary.
     const text = launcherBuf.toString("utf8");
     const match = text.match(SALT_VAR_RE);
     if (!match) fail("Failed to locate salt pattern in binary launcher.");
 
-    const oldBytes = Buffer.from(match[0], "utf8");
-    const newBytes = Buffer.from(`${match[1]}="${nextSalt}"`, "utf8");
+    // Replace the variable assignment pattern (e.g. NC4="friend-2026-401")
+    const oldAssign = Buffer.from(match[0], "utf8");
+    const newAssign = Buffer.from(`${match[1]}="${nextSalt}"`, "utf8");
 
-    if (oldBytes.length !== newBytes.length) {
+    if (oldAssign.length !== newAssign.length) {
       fail(
-        `Salt length mismatch: old ${oldBytes.length} vs new ${newBytes.length} bytes.\n` +
+        `Salt length mismatch: old ${oldAssign.length} vs new ${newAssign.length} bytes.\n` +
         "Binary patching requires identical byte lengths to preserve the executable format."
       );
     }
 
     let count = 0;
-    let idx = launcherBuf.indexOf(oldBytes);
+
+    // Pass 1: replace variable assignments (NC4="...")
+    let idx = launcherBuf.indexOf(oldAssign);
     while (idx !== -1) {
-      newBytes.copy(launcherBuf, idx);
+      newAssign.copy(launcherBuf, idx);
       count++;
-      idx = launcherBuf.indexOf(oldBytes, idx + newBytes.length);
+      idx = launcherBuf.indexOf(oldAssign, idx + newAssign.length);
+    }
+
+    // Pass 2: replace bare salt strings (e.g. in Mach-O string table)
+    const oldBare = Buffer.from(currentSalt, "utf8");
+    const newBare = Buffer.from(nextSalt, "utf8");
+    if (oldBare.length === newBare.length) {
+      idx = launcherBuf.indexOf(oldBare);
+      while (idx !== -1) {
+        newBare.copy(launcherBuf, idx);
+        count++;
+        idx = launcherBuf.indexOf(oldBare, idx + newBare.length);
+      }
     }
 
     if (count === 0) fail("Failed to locate salt bytes in binary launcher.");
@@ -842,7 +894,7 @@ function runCurrent(options) {
   const configPath = getConfigPath(options.configPath);
   const config = readJson(configPath);
   const launcherBuf = fs.readFileSync(launcherPath);
-  const salt = detectSalt(launcherBuf);
+  const salt = detectSalt(launcherBuf, launcherPath);
   const result = rollWithSalt(getUserId(config), salt, data);
   const isTTY = process.stdout.isTTY;
 
