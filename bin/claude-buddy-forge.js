@@ -237,27 +237,45 @@ function patchLauncher(launcherPath, nextSalt) {
   const backupPath = ensureBackup(launcherPath, launcherBuf);
 
   if (binary) {
-    // For binary launchers, do a byte-level replacement to preserve the
-    // executable format.  We locate the salt regex match within a lossy
-    // string view but splice the raw bytes so non-UTF8 data stays intact.
+    // Binary launchers (Mach-O / ELF) embed JS as data.  We must:
+    //  1. Locate the salt pattern as raw bytes (avoid UTF-8 round-trip).
+    //  2. Replace in-place so the file size never changes.
+    //  3. Patch ALL occurrences — the binary may contain duplicate code sections.
+    //  4. Re-sign with an ad-hoc signature so macOS accepts the modified binary.
     const text = launcherBuf.toString("utf8");
     const match = text.match(SALT_VAR_RE);
     if (!match) fail("Failed to locate salt pattern in binary launcher.");
 
-    const oldSnippet = Buffer.from(match[0], "utf8");
-    const newSnippet = Buffer.from(`${match[1]}="${nextSalt}"`, "utf8");
+    const oldBytes = Buffer.from(match[0], "utf8");
+    const newBytes = Buffer.from(`${match[1]}="${nextSalt}"`, "utf8");
 
-    const idx = launcherBuf.indexOf(oldSnippet);
-    if (idx === -1) fail("Failed to locate salt bytes in binary launcher.");
+    if (oldBytes.length !== newBytes.length) {
+      fail(
+        `Salt length mismatch: old ${oldBytes.length} vs new ${newBytes.length} bytes.\n` +
+        "Binary patching requires identical byte lengths to preserve the executable format."
+      );
+    }
 
-    const patched = Buffer.concat([
-      launcherBuf.subarray(0, idx),
-      newSnippet,
-      launcherBuf.subarray(idx + oldSnippet.length),
-    ]);
+    let count = 0;
+    let idx = launcherBuf.indexOf(oldBytes);
+    while (idx !== -1) {
+      newBytes.copy(launcherBuf, idx);
+      count++;
+      idx = launcherBuf.indexOf(oldBytes, idx + newBytes.length);
+    }
 
-    fs.writeFileSync(launcherPath, patched);
+    if (count === 0) fail("Failed to locate salt bytes in binary launcher.");
+
+    fs.writeFileSync(launcherPath, launcherBuf);
     fs.chmodSync(launcherPath, 0o755);
+
+    // Re-sign with ad-hoc signature so macOS accepts the modified binary.
+    try {
+      execFileSync("codesign", ["--remove-signature", launcherPath], { stdio: "ignore" });
+      execFileSync("codesign", ["-s", "-", launcherPath], { stdio: "ignore" });
+    } catch {
+      // codesign may not be available on Linux; binary still works unsigned there.
+    }
   } else {
     // Text launcher — safe to use string operations.
     const launcherText = launcherBuf.toString("utf8");
@@ -278,6 +296,17 @@ function restoreLauncher(launcherPath) {
   const backupPath = `${launcherPath}.buddy-orig.bak`;
   if (!fs.existsSync(backupPath)) fail(`Backup not found: ${backupPath}`);
   fs.copyFileSync(backupPath, launcherPath);
+
+  // Re-sign if the restored file is a binary, so macOS accepts it.
+  if (isBinaryFile(launcherPath)) {
+    try {
+      execFileSync("codesign", ["--remove-signature", launcherPath], { stdio: "ignore" });
+      execFileSync("codesign", ["-s", "-", launcherPath], { stdio: "ignore" });
+    } catch {
+      // codesign may not be available on Linux.
+    }
+  }
+
   return backupPath;
 }
 
